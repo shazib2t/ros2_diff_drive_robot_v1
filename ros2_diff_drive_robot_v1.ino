@@ -66,7 +66,37 @@ float mapPwm(float x, float out_min, float out_max);
 const int R = 0.061;  //Radius of wheel in meter
 const int L = 0.235;  //Length of wheel base in meter
 
+/*----This is encoder section--------------*/
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+// Encoder output to Arduino Interrupt pin. Tracks the tick count.
+#define ENC_IN_LEFT_A 22
+#define ENC_IN_RIGHT_A 9
 
+// Other encoder output to Arduino to keep track of wheel direction
+// Tracks the direction of rotation.
+#define ENC_IN_LEFT_B 21
+#define ENC_IN_RIGHT_B 10
+
+// True = Forward; False = Reverse
+boolean Direction_left = true;
+boolean Direction_right = true;
+ 
+// Minumum and maximum values for 16-bit integers
+const int encoder_minimum = -32768;
+const int encoder_maximum = 32767;
+ 
+// Keep track of the number of wheel ticks
+volatile int left_wheel_tick_count = 0;
+volatile int right_wheel_tick_count = 0;
+ 
+// One-second interval for measurements
+int interval = 1000;
+long previousMillis = 0;
+long currentMillis = 0;
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+/*----This is end of encoder section-------*/
 
 #define LED_PIN 13
 
@@ -80,16 +110,30 @@ extern "C" int clock_gettime(clockid_t unused, struct timespec *tp);
 //MMM----------------------------------------------------
 //-------------velocity and position valiables-----------
 
-float velocity_x = 0.0;
-float velocity_y = 0.0;
+float vx = 0.0;
+float vy = 0.0;
+float vth = 0.0;
 
-float position_x = 0.0;
-float position_y = 0.0;
+
+float posx = 0.0;
+float posy = 0.0;
 float position_z = 0.0;
 float angular_velocity_z = 0.0;
 float current_time = 0.0;
 float last_time = 0.0;
 float heading_ = 0.0;
+
+volatile int tick_x = 0;
+volatile int tick_y = 0;
+volatile int deltaLeft = 0;
+volatile int deltaRight = 0;
+volatile int _PreviousLeftEncoderCounts = 0;
+volatile int _PreviousRightEncoderCounts = 0;
+double omega_left = 0.0;
+double omega_right = 0.0;
+double v_left  = 0.0;
+double  v_right = 0.0; 
+
 
 
 //double deltaTime = 0.0;
@@ -98,64 +142,69 @@ unsigned long prev_odom_update = 0;
 //MMM this function will calculate the position and velocity from imu data 
 //since we do not have a encoder for the wheel.
 void get_pos_vel_for_odom(){
-  //struct timespec tv = {0};
-  //clock_gettime(0, &tv);
-  //current_time = tv.tv_sec;
-  //float deltaTime = (current_time - last_time)/ 1000.0; // delta time to find the position and velocity
-  //last_time = current_time;
+  struct timespec tv = {0};
+  clock_gettime(0, &tv);
+  current_time = tv.tv_sec;
+  float deltaTime = (current_time - last_time)/ 1000.0; // delta time to find the position and velocity
+  last_time = current_time;
   //float deltaTime = 1/46.0;
 
-  
-  double ax = mpu.getLinearAccX();
-  double ay = mpu.getLinearAccY();
-
-  //calculating average of the accel_x
-  float avg_ax = 0.0;
-    for (int i=0; i < 100; i++) {
-        avg_ax = avg_ax + ax;
-    }
-    avg_ax = avg_ax/100.0;
-
-  //calculating average of the accel_y
-  float avg_ay = 0.0;
-    for (int i=0; i < 100; i++) {
-        avg_ay = avg_ay+ ay;
-    }
-    avg_ay = avg_ay/100.0;
 
 
-  unsigned long now = millis();
-  float deltaTime = (now - prev_odom_update) / 1000.0;
-  prev_odom_update = now;
+  //unsigned long now = millis();
+  //float deltaTime = (now - prev_odom_update) / 1000.0;
+  //prev_odom_update = now;
 
-  angular_velocity_z = (double) mpu.getGyroZ();
-  float temp_heading  = (float) mpu.getMagY();
+  //angular_velocity_z = (double) mpu.getGyroZ();
+  float temp_heading  = (float) mpu.getMagX();
 
   //Calculating velocity
+  //------------------------------------------------------//
+  double DistancePerCount = (2* 3.14159265 * 0.06) / 150; //radius = 60mm = 0.06
+  double lengthBetweenTwoWheels = 0.24; //240mm
 
+  tick_x = left_wheel_tick_count;
+  tick_y = right_wheel_tick_count;
   
-  velocity_x += deltaTime * avg_ay; //(float) mpu.getLinearAccY(); // calculating velocity from imu data
-  velocity_y += deltaTime * -avg_ax; //-(float) mpu.getLinearAccX(); // calculating velocity from imu data
-  //velocity_z = deltaTime * (double) mpu.getAccZ(); // calculating velocity from imu data
 
-  //velocity_x_initial = velocity_x;
-  //velocity_y_initial = velocity_y;
+  // extract the wheel velocities from the tick signals count
+  deltaLeft  = tick_x - _PreviousLeftEncoderCounts;
+  deltaRight = tick_y - _PreviousRightEncoderCounts;
+
+  omega_left  = (deltaLeft  * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
+  omega_right = (deltaRight * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
+
+  v_left  = omega_left;
+  v_right = omega_right; 
+
+  vx = ((v_right + v_left) / 2);
+  vy = 0;
+  vth = ((v_right - v_left)/lengthBetweenTwoWheels);
+
+  //double dt = (current_time - last_time).toSec();
+  double delta_x = (vx * cos(temp_heading)) * deltaTime;// dt;
+  double delta_y = (vx * sin(temp_heading)) * deltaTime; //dt;
+  double delta_th = vth * deltaTime; //dt;
+
+  posx += delta_x;
+  posy += delta_y;
+  temp_heading += delta_th;
+
+  _PreviousLeftEncoderCounts  = tick_x;
+  _PreviousRightEncoderCounts = tick_y;
   
-  //calculating position
-  //delta_position_x = deltaTime * velocity_x; // calculating position from imu data
-  //delta_position_y = deltaTime * velocity_y; // calculating position from imu data
-  //delta_position_z = deltaTime * velocity_z;  // calculating position from imu data
+  //------------------------------------------------------//
 
   
   float delta_heading = angular_velocity_z * deltaTime; //radians
   float cos_h = cos(heading_);
   float sin_h = sin(heading_);
-  float delta_x = (velocity_x * cos_h - velocity_y * sin_h) * deltaTime; //m
-  float delta_y = (velocity_x * sin_h + velocity_y * cos_h) * deltaTime; //m
+  //float delta_x = (velocity_x * cos_h - velocity_y * sin_h) * deltaTime; //m
+  //float delta_y = (velocity_x * sin_h + velocity_y * cos_h) * deltaTime; //m
 
   //calculate current position of the robot
-  position_x += delta_x;
-  position_y += delta_y;
+  //position_x += delta_x;
+  //position_y += delta_y;
   heading_   += delta_heading;
 
 
@@ -304,7 +353,25 @@ void setup() {
   set_microros_transports();
   setupPins();
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); 
+  digitalWrite(LED_PIN, HIGH);
+
+  /*----This is encoder section--------------*/
+  /*-----------------------------------------*/
+  /*-----------------------------------------*/
+  // Set pin states of the encoder
+  pinMode(ENC_IN_LEFT_A , INPUT_PULLUP);
+  pinMode(ENC_IN_LEFT_B , INPUT);
+  pinMode(ENC_IN_RIGHT_A , INPUT_PULLUP);
+  pinMode(ENC_IN_RIGHT_B , INPUT);
+ 
+  // Every time the pin goes high, this is a tick
+  attachInterrupt(digitalPinToInterrupt(ENC_IN_LEFT_A), left_wheel_tick, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_IN_RIGHT_A), right_wheel_tick, RISING);
+
+  /*-----------------------------------------*/
+  /*-----------------------------------------*/
+  /*----This is end of encoder section-------*/
+
   
   Wire.begin();
 
@@ -362,7 +429,7 @@ void setup() {
    //MMM 12-12-2021
   //create nav msgs publisher
   
-  RCCHECK(rclc_publisher_init_best_effort(
+  RCCHECK(rclc_publisher_init_default(
     &publisher_nav,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
@@ -427,7 +494,7 @@ void setup() {
   //--------------------------Odometry data--------------------------------
   
   odometry = nav_msgs__msg__Odometry__create();
-  //std_msgs__msg__Header__init(&odometry->header);
+  std_msgs__msg__Header__init(&odometry->header);
   //rosidl_runtime_c__String__init(&odometry->child_frame_id);
   //std_msgs__msg__String__init(&odometry->child_frame_id, 1);
   //geometry_msgs__msg__TransformStamped__Sequence__init(&odometry->transforms_1, 1);
@@ -443,7 +510,7 @@ void setup() {
   odometry->header.frame_id.size = strlen(odometry->header.frame_id.data);
   odometry->header.frame_id.capacity = 100;
 
-  char string_odom_2[] = "/base_footprint";
+  char string_odom_2[] = "/base_link";
   odometry->child_frame_id.data =  (char*)malloc(100*sizeof(char));
   memcpy(odometry->child_frame_id.data, string_odom_2, strlen(string_odom_2) + 1);
   odometry->child_frame_id.size = strlen(odometry->child_frame_id.data);
@@ -455,6 +522,78 @@ void setup() {
   
   
 }
+
+/*----This is encoder section--------------*/
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+
+// Increment the number of ticks
+void right_wheel_tick() {
+   
+  // Read the value for the encoder for the right wheel
+  int val = digitalRead(ENC_IN_RIGHT_B);
+ 
+  if(val == LOW) {
+    Direction_right = false; // Reverse
+  }
+  else {
+    Direction_right = true; // Forward
+  }
+   
+  if (Direction_right) {
+     
+    if (right_wheel_tick_count == encoder_maximum) {
+      right_wheel_tick_count = encoder_minimum;
+    }
+    else {
+      right_wheel_tick_count--;  
+    }    
+  }
+  else {
+    if (right_wheel_tick_count == encoder_minimum) {
+      right_wheel_tick_count = encoder_maximum;
+    }
+    else {
+      right_wheel_tick_count++;  
+    }   
+  }
+}
+ 
+// Increment the number of ticks
+void left_wheel_tick() {
+   
+  // Read the value for the encoder for the left wheel
+  int val = digitalRead(ENC_IN_LEFT_B);
+ 
+  if(val == LOW) {
+    Direction_left = true; // Reverse
+  }
+  else {
+    Direction_left = false; // Forward
+  }
+   
+  if (Direction_left) {
+    if (left_wheel_tick_count == encoder_maximum) {
+      left_wheel_tick_count = encoder_minimum;
+    }
+    else {
+      left_wheel_tick_count--;  
+    }  
+  }
+  else {
+    if (left_wheel_tick_count == encoder_minimum) {
+      left_wheel_tick_count = encoder_maximum;
+    }
+    else {
+      left_wheel_tick_count++;  
+    }   
+  }
+}
+
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+/*----This is end of encoder section-------*/
+
 
 //MMM Imu loop function
 void imu_pub(){
@@ -484,9 +623,9 @@ void tf_pub(){
   clock_gettime(0, &tv);
 
   
-  tf_message->transforms.data[0].transform.translation.x = position_x; //(double) mpu.getEulerX();//mpu.getPitch();
-  tf_message->transforms.data[0].transform.translation.y = position_y; //(double) mpu.getEulerY();//mpu.getRoll();
-  tf_message->transforms.data[0].transform.translation.z = position_z; //(double) mpu.getEulerZ();//mpu.getYaw();
+  tf_message->transforms.data[0].transform.translation.x = posx; //(double) mpu.getEulerX();//mpu.getPitch();
+  tf_message->transforms.data[0].transform.translation.y = posy; //(double) mpu.getEulerY();//mpu.getRoll();
+  tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
 
   tf_message->transforms.data[0].transform.rotation.x = (double) mpu.getQuaternionY(); //q[2];
   tf_message->transforms.data[0].transform.rotation.y = (double) -mpu.getQuaternionX();  //q[1];
@@ -501,18 +640,18 @@ void tf_pub(){
 //MMM nav loop function
 void nav_pub(){
 
-  get_pos_vel_for_odom();
-  struct timespec pv = {0};
-  clock_gettime(0, &pv);
+  //get_pos_vel_for_odom();
+  struct timespec tv = {0};
+  clock_gettime(0, &tv);
   float q[4];
   euler_to_quat(0, 0, heading_, q);
   
 
-  odometry->header.stamp.nanosec = pv.tv_nsec;
-  odometry->header.stamp.sec = pv.tv_sec;
+  odometry->header.stamp.nanosec = tv.tv_nsec;
+  odometry->header.stamp.sec = tv.tv_sec;
   
-  odometry->pose.pose.position.x = position_x;
-  odometry->pose.pose.position.y = position_y;
+  odometry->pose.pose.position.x = tick_x;
+  odometry->pose.pose.position.y = tick_y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
   odometry->pose.pose.orientation.x = (double) q[1]; //(double) mpu.getQuaternionY();
   odometry->pose.pose.orientation.y = (double) q[2]; //(double) -mpu.getQuaternionX();
@@ -525,13 +664,13 @@ void nav_pub(){
 
   
 
-  odometry->twist.twist.linear.x = velocity_x; 
-  odometry->twist.twist.linear.y = velocity_y; 
+  odometry->twist.twist.linear.x = vx; 
+  odometry->twist.twist.linear.y = vy; 
   odometry->twist.twist.linear.z = 0.0; // (double) velocity_z;
 
   odometry->twist.twist.angular.x = 0.0; //(double) velocity_x; 
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
-  odometry->twist.twist.angular.z = angular_velocity_z; // (double) velocity_z;
+  odometry->twist.twist.angular.z = vth; // (double) velocity_z;
 
   odometry->twist.covariance[0] = 0.001;
   odometry->twist.covariance[7] = 0.001;
@@ -550,7 +689,7 @@ void loop() {
   //clock_gettime(0, &tv);
 
   mpu.update();
-  
+  get_pos_vel_for_odom();
   imu_pub();
   nav_pub();
   tf_pub();
