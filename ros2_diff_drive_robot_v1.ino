@@ -148,14 +148,16 @@ extern "C" int clock_gettime(clockid_t unused, struct timespec *tp);
 //-------------velocity and position valiables-----------
 
 float vx = 0.0;
+float vxx = 0.0;
 float vy = 0.0;
 float vth = 0.0;
+float th = 0.0;
 
-
-float posx = 0.0;
-float posy = 0.0;
+float x = 0.0;
+float y = 0.0;
 float position_z = 0.0;
 float angular_velocity_z = 0.0;
+float deltaTime = 0.0;
 float current_time = 0.0;
 float last_time = 0.0;
 float heading_ = 0.0;
@@ -182,8 +184,8 @@ void get_pos_vel_for_odom(){
   struct timespec tv = {0};
   clock_gettime(0, &tv);
   current_time = tv.tv_sec;
-  float deltaTime = (current_time - last_time)/ 1000.0; // delta time to find the position and velocity
-  last_time = current_time;
+  deltaTime = (current_time - last_time); // delta time to find the position and velocity
+  
   //float deltaTime = 1/46.0;
 
 
@@ -193,7 +195,8 @@ void get_pos_vel_for_odom(){
   //prev_odom_update = now;
 
   //angular_velocity_z = (double) mpu.getGyroZ();
-  float temp_heading  = (float) mpu.getMagX();
+  //float th  = (float) mpu.getYaw()/ (180.0 / 3.14159265);
+  //float th  = 0.0;;
 
   //Calculating velocity
   //------------------------------------------------------//
@@ -208,24 +211,34 @@ void get_pos_vel_for_odom(){
   deltaLeft  = tick_x - _PreviousLeftEncoderCounts;
   deltaRight = tick_y - _PreviousRightEncoderCounts;
 
-  omega_left  = (deltaLeft  * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
-  omega_right = (deltaRight * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
+  //omega_left  = (deltaLeft  * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
+  //omega_right = (deltaRight * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
 
-  v_left  = omega_left;
-  v_right = omega_right; 
+  vx  = (deltaLeft  * DistancePerCount) / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
+  vy  = (deltaRight * DistancePerCount)  / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
 
-  vx = ((v_right + v_left) / 2);
-  vy = 0;
-  vth = ((v_right - v_left)/lengthBetweenTwoWheels);
+  //v_left  = omega_left;
+  //v_right = omega_right; 
+
+  //v_x = ((v_right + v_left) / 2);
+  //v_y = 0;
+  vxx = (vx + vy)/2;
+  vth = ((vy - vx)/lengthBetweenTwoWheels);
+
+  th += vth;
 
   //double dt = (current_time - last_time).toSec();
-  double delta_x = (vx * cos(temp_heading)) * deltaTime;// dt;
-  double delta_y = (vx * sin(temp_heading)) * deltaTime; //dt;
-  double delta_th = vth * deltaTime; //dt;
+  //double delta_x = (vx * cos(temp_heading)) * current_time;// dt; ***Since the current time is already using ros2 time
+  //double delta_y = (vx * sin(temp_heading)) * current_time; //dt; ***Since the current time is already using ros2 time
+  //double delta_th = vth * deltaTime; //dt;
 
-  posx += delta_x;
-  posy += delta_y;
-  temp_heading += delta_th;
+  double delta_x = (vxx * cos(th) - 0 * sin(th)) * current_time;
+  double delta_y = (vxx * sin(th) + 0 * cos(th)) * current_time;
+  double delta_th = vth * current_time;
+  
+  x += delta_x;
+  y += delta_y;
+  //th += delta_th;
 
   _PreviousLeftEncoderCounts  = tick_x;
   _PreviousRightEncoderCounts = tick_y;
@@ -233,9 +246,9 @@ void get_pos_vel_for_odom(){
   //------------------------------------------------------//
 
   
-  float delta_heading = angular_velocity_z * deltaTime; //radians
-  float cos_h = cos(heading_);
-  float sin_h = sin(heading_);
+  float delta_heading = angular_velocity_z * current_time; //radians ***Since the current time is already using ros2 time
+  //float cos_h = cos(heading_);
+  //float sin_h = sin(heading_);
   //float delta_x = (velocity_x * cos_h - velocity_y * sin_h) * deltaTime; //m
   //float delta_y = (velocity_x * sin_h + velocity_y * cos_h) * deltaTime; //m
 
@@ -265,28 +278,28 @@ void get_pos_vel_for_odom(){
   
   //calculate robot's heading in quaternion angle
   //ROS has a function to calculate yaw in quaternion angle
-  float q[4];
-  euler_to_quat(0, 0, heading_, q);
+  //float q[4];
+  //euler_to_quat(0, 0, heading_, q);
 
-    
+  last_time = current_time;  
   
 }
 
 
 //Calculate the quartenion from the angles
-const void euler_to_quat(float roll, float pitch, float yaw, float* q) 
-{
-    float cy = cos(yaw * 0.5);
-    float sy = sin(yaw * 0.5);
-    float cp = cos(pitch * 0.5);
-    float sp = sin(pitch * 0.5);
-    float cr = cos(roll * 0.5);
-    float sr = sin(roll * 0.5);
+const void euler_to_quat(float x, float y, float z, double* q) {
+    float c1 = cos((y*3.14159265/180.0)/2);
+    float c2 = cos((z*3.14159265/180.0)/2);
+    float c3 = cos((x*3.14159265/180.0)/2);
 
-    q[0] = cy * cp * cr + sy * sp * sr;
-    q[1] = cy * cp * sr - sy * sp * cr;
-    q[2] = sy * cp * sr + cy * sp * cr;
-    q[3] = sy * cp * cr - cy * sp * sr;
+    float s1 = sin((y*3.14159265/180.0)/2);
+    float s2 = sin((z*3.14159265/180.0)/2);
+    float s3 = sin((x*3.14159265/180.0)/2);
+
+    q[0] = c1 * c2 * c3 - s1 * s2 * s3;
+    q[1] = s1 * s2 * c3 + c1 * c2 * s3;
+    q[2] = s1 * c2 * c3 + c1 * s2 * s3;
+    q[3] = c1 * s2 * c3 - s1 * c2 * s3;
 }
 
 void error_loop(){
@@ -333,8 +346,8 @@ void subscription_callback(const void *msgin) {
   digitalWrite(LED_PIN, (msg->linear.x == 0) ? LOW : HIGH);
 
   // Cap values at [-1 .. 1]
-  float x = max(min(msg->linear.x, 1.0f), -1.0f);
-  float z = max(min(msg->angular.z, 1.0f), -1.0f);
+  //float x = max(min(msg->linear.x, 1.0f), -1.0f);
+  //float z = max(min(msg->angular.z, 1.0f), -1.0f);
 
   // Calculate the intensity of left and right wheels. Simple version.
   // Taken from https://hackernoon.com/unicycle-to-differential-drive-courseras-control-of-mobile-robots-with-ros-and-rosbots-part-2-6d27d15f2010#1e59
@@ -637,17 +650,17 @@ void imu_pub(){
   //MMM 11-19-2021
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  imu->orientation.x = (double) mpu.getQuaternionY(); //q[2];
-  imu->orientation.y = (double) -mpu.getQuaternionX();  //q[1];
+  imu->orientation.x = (double) mpu.getQuaternionX(); //q[2];
+  imu->orientation.y = (double) mpu.getQuaternionY();  //q[1];
   imu->orientation.z = (double) mpu.getQuaternionZ();  //q[3]; 
   imu->orientation.w = (double) mpu.getQuaternionW();  //q[0];
 
-  imu->angular_velocity.x = (double) mpu.getGyroY(); 
-  imu->angular_velocity.y = (double) -mpu.getGyroX(); 
+  imu->angular_velocity.x = (double) mpu.getGyroX(); 
+  imu->angular_velocity.y = (double) mpu.getGyroY(); 
   imu->angular_velocity.z = (double) mpu.getGyroZ();   
 
-  imu->linear_acceleration.x = (double) mpu.getAccY(); 
-  imu->linear_acceleration.y = (double) -mpu.getAccX(); 
+  imu->linear_acceleration.x = (double) mpu.getAccX(); 
+  imu->linear_acceleration.y = (double) mpu.getAccY(); 
   imu->linear_acceleration.z = (double) mpu.getAccZ();  
   
   imu->header.stamp.nanosec = tv.tv_nsec;
@@ -658,18 +671,19 @@ void imu_pub(){
 void tf_pub(){
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-
-  
-  tf_message->transforms.data[0].transform.translation.x = posx; //(double) mpu.getEulerX();//mpu.getPitch();
-  tf_message->transforms.data[0].transform.translation.y = posy; //(double) mpu.getEulerY();//mpu.getRoll();
-  tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
-
-  tf_message->transforms.data[0].transform.rotation.x = (double) mpu.getQuaternionY(); //q[2];
-  tf_message->transforms.data[0].transform.rotation.y = (double) -mpu.getQuaternionX();  //q[1];
-  tf_message->transforms.data[0].transform.rotation.z = (double) mpu.getQuaternionZ();  //q[3]; 
-  tf_message->transforms.data[0].transform.rotation.w = (double) mpu.getQuaternionW();  //q[0];
+  double q[4];
+  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
   tf_message->transforms.data[0].header.stamp.nanosec = tv.tv_nsec;
   tf_message->transforms.data[0].header.stamp.sec = tv.tv_sec;
+  tf_message->transforms.data[0].transform.translation.x = x; //(double) mpu.getEulerX();//mpu.getPitch();
+  tf_message->transforms.data[0].transform.translation.y = y; //(double) mpu.getEulerY();//mpu.getRoll();
+  tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
+
+  tf_message->transforms.data[0].transform.rotation.x = q[1];//(float) mpu.getQuaternionX();// /(180/3.14159265);  //(double) q[1]; //mpu.getQuaternionW(); //q[2];
+  tf_message->transforms.data[0].transform.rotation.y = -q[2];//-(float) mpu.getQuaternionY();// /(180/3.14159265);  //(double) q[2]; //mpu.getQuaternionX();  //q[1];
+  tf_message->transforms.data[0].transform.rotation.z = -q[3];//-(float) mpu.getQuaternionZ(); // /(180/3.14159265);  //(double) q[3]; //mpu.getQuaternionY();  //q[3]; 
+  tf_message->transforms.data[0].transform.rotation.w = q[0];//(float) mpu.getQuaternionW(); // /(180/3.14159265);  //(double) q[0]; //mpu.getQuaternionZ();  //q[0];
+  
   
 }
 
@@ -680,20 +694,20 @@ void nav_pub(){
   //get_pos_vel_for_odom();
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  float q[4];
-  euler_to_quat(0, 0, heading_, q);
-  
+  double q[4];
+  //euler_to_quat(0, 0, heading_, q);
+  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
 
   odometry->header.stamp.nanosec = tv.tv_nsec;
   odometry->header.stamp.sec = tv.tv_sec;
   
-  odometry->pose.pose.position.x = tick_x;
-  odometry->pose.pose.position.y = tick_y;
+  odometry->pose.pose.position.x = x;
+  odometry->pose.pose.position.y = y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
-  odometry->pose.pose.orientation.x = (double) q[1]; //(double) mpu.getQuaternionY();
-  odometry->pose.pose.orientation.y = (double) q[2]; //(double) -mpu.getQuaternionX();
-  odometry->pose.pose.orientation.z = (double) q[3]; //(double) mpu.getQuaternionZ();
-  odometry->pose.pose.orientation.w = (double) q[0]; //(double) mpu.getQuaternionW();
+  odometry->pose.pose.orientation.x = q[1];//(float) mpu.getQuaternionX();
+  odometry->pose.pose.orientation.y = -q[2];//-(float) mpu.getQuaternionY();
+  odometry->pose.pose.orientation.z = -q[3];//-(float) mpu.getQuaternionZ();
+  odometry->pose.pose.orientation.w = q[0];//(float) mpu.getQuaternionW();
 
   odometry->pose.covariance[0] = 0.001;
   odometry->pose.covariance[7] = 0.001;
@@ -701,13 +715,13 @@ void nav_pub(){
 
   
 
-  odometry->twist.twist.linear.x = vx; 
+  odometry->twist.twist.linear.x = vxx; 
   odometry->twist.twist.linear.y = vy; 
-  odometry->twist.twist.linear.z = 0.0; // (double) velocity_z;
+  odometry->twist.twist.linear.z = 0; // (double) velocity_z;
 
   odometry->twist.twist.angular.x = 0.0; //(double) velocity_x; 
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
-  odometry->twist.twist.angular.z = vth; // (double) velocity_z;
+  odometry->twist.twist.angular.z = th; //vth; // (double) velocity_z;
 
   odometry->twist.covariance[0] = 0.001;
   odometry->twist.covariance[7] = 0.001;
@@ -722,8 +736,8 @@ void loop() {
   //delay(100);
   
   
-  //struct timespec tv = {0};
-  //clock_gettime(0, &tv);
+  struct timespec tv = {0};
+  clock_gettime(0, &tv);
 
   mpu.update();
   get_pos_vel_for_odom();
@@ -735,6 +749,6 @@ void loop() {
   RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
-  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
+  //RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
   
 }
