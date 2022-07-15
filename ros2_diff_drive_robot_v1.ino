@@ -148,9 +148,10 @@ extern "C" int clock_gettime(clockid_t unused, struct timespec *tp);
 //-------------velocity and position valiables-----------
 
 float vx = 0.0;
+float vxx = 0.0;
 float vy = 0.0;
 float vth = 0.0;
-
+float th = 0.0;
 
 float x = 0.0;
 float y = 0.0;
@@ -194,15 +195,16 @@ void get_pos_vel_for_odom(){
   //prev_odom_update = now;
 
   //angular_velocity_z = (double) mpu.getGyroZ();
-  float th  = (float) mpu.getYaw();
+  //float th  = (float) mpu.getYaw()/ (180.0 / 3.14159265);
+  //float th  = 0.0;;
 
   //Calculating velocity
   //------------------------------------------------------//
   double DistancePerCount = (2* 3.14159265 * 0.06) / 150; //radius = 60mm = 0.06
   double lengthBetweenTwoWheels = 0.24; //240mm
 
-  tick_y = left_wheel_tick_count;
-  tick_x = right_wheel_tick_count;
+  tick_x = left_wheel_tick_count;
+  tick_y = right_wheel_tick_count;
   
 
   // extract the wheel velocities from the tick signals count
@@ -212,28 +214,31 @@ void get_pos_vel_for_odom(){
   //omega_left  = (deltaLeft  * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
   //omega_right = (deltaRight * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
 
-  vx  = (deltaLeft  * DistancePerCount);// / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
-  vy = (deltaRight * DistancePerCount); //  / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
+  vx  = (deltaLeft  * DistancePerCount) / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
+  vy  = (deltaRight * DistancePerCount)  / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
 
   //v_left  = omega_left;
   //v_right = omega_right; 
 
   //v_x = ((v_right + v_left) / 2);
   //v_y = 0;
+  vxx = (vx + vy)/2;
   vth = ((vy - vx)/lengthBetweenTwoWheels);
+
+  th += vth;
 
   //double dt = (current_time - last_time).toSec();
   //double delta_x = (vx * cos(temp_heading)) * current_time;// dt; ***Since the current time is already using ros2 time
   //double delta_y = (vx * sin(temp_heading)) * current_time; //dt; ***Since the current time is already using ros2 time
   //double delta_th = vth * deltaTime; //dt;
 
-  double delta_x = (vx * cos(th) - vy * sin(th)) * current_time;
-  double delta_y = (vx * sin(th) + vy * cos(th)) * current_time;
+  double delta_x = (vxx * cos(th) - 0 * sin(th)) * current_time;
+  double delta_y = (vxx * sin(th) + 0 * cos(th)) * current_time;
   double delta_th = vth * current_time;
   
   x += delta_x;
   y += delta_y;
-  th += delta_th;
+  //th += delta_th;
 
   _PreviousLeftEncoderCounts  = tick_x;
   _PreviousRightEncoderCounts = tick_y;
@@ -273,7 +278,7 @@ void get_pos_vel_for_odom(){
   
   //calculate robot's heading in quaternion angle
   //ROS has a function to calculate yaw in quaternion angle
-  float q[4];
+  //float q[4];
   //euler_to_quat(0, 0, heading_, q);
 
   last_time = current_time;  
@@ -283,13 +288,13 @@ void get_pos_vel_for_odom(){
 
 //Calculate the quartenion from the angles
 const void euler_to_quat(float x, float y, float z, double* q) {
-    float c1 = cos((y*3.14/180.0)/2);
-    float c2 = cos((z*3.14/180.0)/2);
-    float c3 = cos((x*3.14/180.0)/2);
+    float c1 = cos((y*3.14159265/180.0)/2);
+    float c2 = cos((z*3.14159265/180.0)/2);
+    float c3 = cos((x*3.14159265/180.0)/2);
 
-    float s1 = sin((y*3.14/180.0)/2);
-    float s2 = sin((z*3.14/180.0)/2);
-    float s3 = sin((x*3.14/180.0)/2);
+    float s1 = sin((y*3.14159265/180.0)/2);
+    float s2 = sin((z*3.14159265/180.0)/2);
+    float s3 = sin((x*3.14159265/180.0)/2);
 
     q[0] = c1 * c2 * c3 - s1 * s2 * s3;
     q[1] = s1 * s2 * c3 + c1 * c2 * s3;
@@ -666,19 +671,19 @@ void imu_pub(){
 void tf_pub(){
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  //double q[4];
-  //euler_to_quat(mpu.getRoll(), mpu.getPitch(), mpu.getYaw(), q);
-  
+  double q[4];
+  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
+  tf_message->transforms.data[0].header.stamp.nanosec = tv.tv_nsec;
+  tf_message->transforms.data[0].header.stamp.sec = tv.tv_sec;
   tf_message->transforms.data[0].transform.translation.x = x; //(double) mpu.getEulerX();//mpu.getPitch();
   tf_message->transforms.data[0].transform.translation.y = y; //(double) mpu.getEulerY();//mpu.getRoll();
   tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
 
-  tf_message->transforms.data[0].transform.rotation.x = -(float) mpu.getQuaternionX();  //(double) q[1]; //mpu.getQuaternionW(); //q[2];
-  tf_message->transforms.data[0].transform.rotation.y = (float) mpu.getQuaternionY();  //(double) q[2]; //mpu.getQuaternionX();  //q[1];
-  tf_message->transforms.data[0].transform.rotation.z = (float) mpu.getQuaternionZ();  //(double) q[3]; //mpu.getQuaternionY();  //q[3]; 
-  tf_message->transforms.data[0].transform.rotation.w = -(float) mpu.getQuaternionW();  //(double) q[0]; //mpu.getQuaternionZ();  //q[0];
-  tf_message->transforms.data[0].header.stamp.nanosec = tv.tv_nsec;
-  tf_message->transforms.data[0].header.stamp.sec = tv.tv_sec;
+  tf_message->transforms.data[0].transform.rotation.x = q[1];//(float) mpu.getQuaternionX();// /(180/3.14159265);  //(double) q[1]; //mpu.getQuaternionW(); //q[2];
+  tf_message->transforms.data[0].transform.rotation.y = -q[2];//-(float) mpu.getQuaternionY();// /(180/3.14159265);  //(double) q[2]; //mpu.getQuaternionX();  //q[1];
+  tf_message->transforms.data[0].transform.rotation.z = -q[3];//-(float) mpu.getQuaternionZ(); // /(180/3.14159265);  //(double) q[3]; //mpu.getQuaternionY();  //q[3]; 
+  tf_message->transforms.data[0].transform.rotation.w = q[0];//(float) mpu.getQuaternionW(); // /(180/3.14159265);  //(double) q[0]; //mpu.getQuaternionZ();  //q[0];
+  
   
 }
 
@@ -689,9 +694,9 @@ void nav_pub(){
   //get_pos_vel_for_odom();
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  //double q[4];
+  double q[4];
   //euler_to_quat(0, 0, heading_, q);
-  //euler_to_quat(mpu.getRoll(), mpu.getPitch(), mpu.getYaw(), q);
+  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
 
   odometry->header.stamp.nanosec = tv.tv_nsec;
   odometry->header.stamp.sec = tv.tv_sec;
@@ -699,10 +704,10 @@ void nav_pub(){
   odometry->pose.pose.position.x = x;
   odometry->pose.pose.position.y = y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
-  odometry->pose.pose.orientation.x = -(float) mpu.getQuaternionX();
-  odometry->pose.pose.orientation.y = (float) mpu.getQuaternionY();
-  odometry->pose.pose.orientation.z = (float) mpu.getQuaternionZ();
-  odometry->pose.pose.orientation.w = -(float) mpu.getQuaternionW();
+  odometry->pose.pose.orientation.x = q[1];//(float) mpu.getQuaternionX();
+  odometry->pose.pose.orientation.y = -q[2];//-(float) mpu.getQuaternionY();
+  odometry->pose.pose.orientation.z = -q[3];//-(float) mpu.getQuaternionZ();
+  odometry->pose.pose.orientation.w = q[0];//(float) mpu.getQuaternionW();
 
   odometry->pose.covariance[0] = 0.001;
   odometry->pose.covariance[7] = 0.001;
@@ -710,13 +715,13 @@ void nav_pub(){
 
   
 
-  odometry->twist.twist.linear.x = vx; 
+  odometry->twist.twist.linear.x = vxx; 
   odometry->twist.twist.linear.y = vy; 
   odometry->twist.twist.linear.z = 0; // (double) velocity_z;
 
   odometry->twist.twist.angular.x = 0.0; //(double) velocity_x; 
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
-  odometry->twist.twist.angular.z = vth; // (double) velocity_z;
+  odometry->twist.twist.angular.z = th; //vth; // (double) velocity_z;
 
   odometry->twist.covariance[0] = 0.001;
   odometry->twist.covariance[7] = 0.001;
@@ -731,8 +736,8 @@ void loop() {
   //delay(100);
   
   
-  //struct timespec tv = {0};
-  //clock_gettime(0, &tv);
+  struct timespec tv = {0};
+  clock_gettime(0, &tv);
 
   mpu.update();
   get_pos_vel_for_odom();
@@ -744,6 +749,6 @@ void loop() {
   RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
-  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
+  //RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
   
 }
