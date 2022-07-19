@@ -43,8 +43,31 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <rcl/error_handling.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
-#include "MPU9250.h"
-MPU9250 mpu;
+
+
+// I2Cdev and MPU6050 must be installed as libraries, or else the .cpp/.h files
+// for both classes must be in the include path of your project
+#include "I2Cdev.h"
+
+#include "MPU6050_6Axis_MotionApps20.h"
+//#include "MPU6050.h" // not necessary if using MotionApps include file
+
+// Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
+// is used in I2Cdev.h
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    #include "Wire.h"
+#endif
+
+// class default I2C address is 0x68
+// specific I2C addresses may be passed as a parameter here
+// AD0 low = 0x68 (default for SparkFun breakout and InvenSense evaluation board)
+// AD0 high = 0x69
+MPU6050 mpu;
+//MPU6050 mpu(0x69); // <-- use for AD0 high
+//MPU9250 mpu;
+
+//#include "MPU9250.h"
+//MPU9250 mpu;
 
 #include <geometry_msgs/msg/transform_stamped.h>
 #include <tf2_msgs/msg/tf_message.h>
@@ -83,6 +106,26 @@ rcl_timer_t timer;
 sensor_msgs__msg__Imu * imu; //adding to publish imu sensor data
 nav_msgs__msg__Odometry  *odometry; //this is for odom
 
+
+//MMM 07-19-2022--------------DMP imu from 6050----------
+#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
+// MPU control/status vars
+bool dmpReady = false;  // set true if DMP init was successful
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
+
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
 
 //MMM
 #define PWM_MIN 0
@@ -177,6 +220,9 @@ double  v_right = 0.0;
 
 //double deltaTime = 0.0;
 unsigned long prev_odom_update = 0;
+
+
+
 
 //MMM this function will calculate the position and velocity from imu data 
 //since we do not have a encoder for the wheel.
@@ -343,7 +389,7 @@ void stop()
 void subscription_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   // if velocity in x direction is 0 turn off LED, if 1 turn on LED
-  digitalWrite(LED_PIN, (msg->linear.x == 0) ? LOW : HIGH);
+  //digitalWrite(LED_PIN, (msg->linear.x == 0) ? LOW : HIGH);
 
   // Cap values at [-1 .. 1]
   //float x = max(min(msg->linear.x, 1.0f), -1.0f);
@@ -399,6 +445,19 @@ float mapPwm(float x, float out_min, float out_max)
 
 //-------------------------------------
 
+
+
+// ================================================================
+// ===               INTERRUPT DETECTION ROUTINE                ===
+// ================================================================
+
+volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+void dmpDataReady() {
+    mpuInterrupt = true;
+}
+
+
+
 void setup() {
   set_microros_transports();
   setupPins();
@@ -426,16 +485,66 @@ void setup() {
   Wire.begin();
 
   //MMM
+  /*
   if (!mpu.setup(0x68)) {  // change to your own address
         while (1) {
           Serial.println("MPU connection failed. Please check your connection with `connection_check` example.");
             delay(5000);
         }
     }
-
-
+  */
+  // calibrate anytime you want to
+  //mpu.calibrateAccelGyro();
   //pinMode(LED_PIN, OUTPUT);
   //digitalWrite(LED_PIN, HIGH);  
+
+  /*-------------------------------new DMP for imu---------------------*/
+  /*----------IMU 6050 DMP code working for 9250, so using it here ----*/
+  // join I2C bus (I2Cdev library doesn't do this automatically)
+  #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+      Wire.begin();
+      Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
+  #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+      Fastwire::setup(400, true);
+  #endif
+  mpu.initialize();
+  pinMode(INTERRUPT_PIN, INPUT);
+  devStatus = mpu.dmpInitialize();
+  // supply your own gyro offsets here, scaled for min sensitivity
+  mpu.setXGyroOffset(220);
+  mpu.setYGyroOffset(76);
+  mpu.setZGyroOffset(-85);
+  mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+
+  // make sure it worked (returns 0 if so)
+  if (devStatus == 0) {
+      // Calibration Time: generate offsets and calibrate our MPU6050
+      mpu.CalibrateAccel(6);
+      mpu.CalibrateGyro(6);
+      mpu.PrintActiveOffsets();
+      // turn on the DMP, now that it's ready
+      Serial.println(F("Enabling DMP..."));
+      mpu.setDMPEnabled(true);
+
+      attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+      mpuIntStatus = mpu.getIntStatus();
+      // set our DMP Ready flag so the main loop() function knows it's okay to use it
+      //Serial.println(F("DMP ready! Waiting for first interrupt..."));
+      dmpReady = true;
+
+      // get expected DMP packet size for later comparison
+      packetSize = mpu.dmpGetFIFOPacketSize();
+  }else {
+        // ERROR!
+        // 1 = initial memory load failed
+        // 2 = DMP configuration updates failed
+        // (if it's going to break, usually the code will be 1)
+        Serial.print(F("DMP Initialization failed (code "));
+        Serial.print(devStatus);
+        Serial.println(F(")"));
+  }
+        
+  /*----------------------end of DMP code-------------------------*/
   
   delay(2000);
 
@@ -650,18 +759,25 @@ void imu_pub(){
   //MMM 11-19-2021
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  imu->orientation.x = (double) mpu.getQuaternionX(); //q[2];
-  imu->orientation.y = (double) mpu.getQuaternionY();  //q[1];
-  imu->orientation.z = (double) mpu.getQuaternionZ();  //q[3]; 
-  imu->orientation.w = (double) mpu.getQuaternionW();  //q[0];
 
-  imu->angular_velocity.x = (double) mpu.getGyroX(); 
-  imu->angular_velocity.y = (double) mpu.getGyroY(); 
-  imu->angular_velocity.z = (double) mpu.getGyroZ();   
+  mpu.dmpGetQuaternion(&q, fifoBuffer);
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  mpu.dmpGetAccel(&aa, fifoBuffer);
+  mpu.dmpGetGravity(&gravity, &q);
+  mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+  
+  imu->orientation.x = q.x;//(double) mpu.getQuaternionX(); //q[2];
+  imu->orientation.y = q.y;//(double) mpu.getQuaternionY();  //q[1];
+  imu->orientation.z = q.z;//(double) mpu.getQuaternionZ();  //q[3]; 
+  imu->orientation.w = q.w;//(double) mpu.getQuaternionW();  //q[0];
 
-  imu->linear_acceleration.x = (double) mpu.getAccX(); 
-  imu->linear_acceleration.y = (double) mpu.getAccY(); 
-  imu->linear_acceleration.z = (double) mpu.getAccZ();  
+  imu->angular_velocity.x = gx;//(double) mpu.getGyroX(); 
+  imu->angular_velocity.y = gy;//(double) mpu.getGyroY(); 
+  imu->angular_velocity.z = gz;//(double) mpu.getGyroZ();   
+
+  imu->linear_acceleration.x = aaReal.x;//(double) mpu.getAccX(); 
+  imu->linear_acceleration.y = aaReal.y;//(double) mpu.getAccY(); 
+  imu->linear_acceleration.z = aaReal.z;//(double) mpu.getAccZ();  
   
   imu->header.stamp.nanosec = tv.tv_nsec;
   imu->header.stamp.sec = tv.tv_sec;
@@ -671,18 +787,24 @@ void imu_pub(){
 void tf_pub(){
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  double q[4];
-  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
+  //double q[4];
+  //euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
+  //euler_to_quat(mpu.getEulerX(),mpu.getEulerY() , mpu.getEulerZ(), q);
+
+
+  mpu.dmpGetQuaternion(&q, fifoBuffer);
+
+  
   tf_message->transforms.data[0].header.stamp.nanosec = tv.tv_nsec;
   tf_message->transforms.data[0].header.stamp.sec = tv.tv_sec;
   tf_message->transforms.data[0].transform.translation.x = x; //(double) mpu.getEulerX();//mpu.getPitch();
   tf_message->transforms.data[0].transform.translation.y = y; //(double) mpu.getEulerY();//mpu.getRoll();
   tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
 
-  tf_message->transforms.data[0].transform.rotation.x = q[1];//(float) mpu.getQuaternionX();// /(180/3.14159265);  //(double) q[1]; //mpu.getQuaternionW(); //q[2];
-  tf_message->transforms.data[0].transform.rotation.y = -q[2];//-(float) mpu.getQuaternionY();// /(180/3.14159265);  //(double) q[2]; //mpu.getQuaternionX();  //q[1];
-  tf_message->transforms.data[0].transform.rotation.z = -q[3];//-(float) mpu.getQuaternionZ(); // /(180/3.14159265);  //(double) q[3]; //mpu.getQuaternionY();  //q[3]; 
-  tf_message->transforms.data[0].transform.rotation.w = q[0];//(float) mpu.getQuaternionW(); // /(180/3.14159265);  //(double) q[0]; //mpu.getQuaternionZ();  //q[0];
+  tf_message->transforms.data[0].transform.rotation.x = q.x;//q[1];//(float) mpu.getQuaternionX();// /(180/3.14159265);  //(double) q[1]; //mpu.getQuaternionW(); //q[2];
+  tf_message->transforms.data[0].transform.rotation.y = q.y;//-q[2];//-(float) mpu.getQuaternionY();// /(180/3.14159265);  //(double) q[2]; //mpu.getQuaternionX();  //q[1];
+  tf_message->transforms.data[0].transform.rotation.z = q.z;//-q[3];//-(float) mpu.getQuaternionZ(); // /(180/3.14159265);  //(double) q[3]; //mpu.getQuaternionY();  //q[3]; 
+  tf_message->transforms.data[0].transform.rotation.w = q.w;//q[0];//(float) mpu.getQuaternionW(); // /(180/3.14159265);  //(double) q[0]; //mpu.getQuaternionZ();  //q[0];
   
   
 }
@@ -694,9 +816,12 @@ void nav_pub(){
   //get_pos_vel_for_odom();
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  double q[4];
+  //double q[4];
   //euler_to_quat(0, 0, heading_, q);
-  euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
+  //euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
+
+  mpu.dmpGetQuaternion(&q, fifoBuffer);
+
 
   odometry->header.stamp.nanosec = tv.tv_nsec;
   odometry->header.stamp.sec = tv.tv_sec;
@@ -704,10 +829,10 @@ void nav_pub(){
   odometry->pose.pose.position.x = x;
   odometry->pose.pose.position.y = y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
-  odometry->pose.pose.orientation.x = q[1];//(float) mpu.getQuaternionX();
-  odometry->pose.pose.orientation.y = -q[2];//-(float) mpu.getQuaternionY();
-  odometry->pose.pose.orientation.z = -q[3];//-(float) mpu.getQuaternionZ();
-  odometry->pose.pose.orientation.w = q[0];//(float) mpu.getQuaternionW();
+  odometry->pose.pose.orientation.x = q.x;//q[1];//(float) mpu.getQuaternionX();
+  odometry->pose.pose.orientation.y = q.y;//-q[2];//-(float) mpu.getQuaternionY();
+  odometry->pose.pose.orientation.z = q.z;//-q[3];//-(float) mpu.getQuaternionZ();
+  odometry->pose.pose.orientation.w = q.w;//q[0];//(float) mpu.getQuaternionW();
 
   odometry->pose.covariance[0] = 0.001;
   odometry->pose.covariance[7] = 0.001;
@@ -739,16 +864,48 @@ void loop() {
   struct timespec tv = {0};
   clock_gettime(0, &tv);
 
-  mpu.update();
-  get_pos_vel_for_odom();
-  imu_pub();
-  nav_pub();
-  tf_pub();
-  
-  
-  RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
-  RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
-  RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
+  //mpu.update();
+  //get_pos_vel_for_odom();
+  //imu_pub();
+  //nav_pub();
+  //tf_pub();
+
+  /*if (mpu.update()) {
+  static uint32_t prev_ms = millis();
+        if (millis() > prev_ms + 25) {
+            get_pos_vel_for_odom();
+            imu_pub();
+            nav_pub();
+            tf_pub();
+            RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
+            RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
+            RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
+            prev_ms = millis();
+        }
+    }
+
+  */
+
+
+  /*-------------------------DMP code-----------------*/
+  // if programming failed, don't try to do anything
+  if (!dmpReady) return;
+  // read a packet from FIFO
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
+      mpu.dmpGetQuaternion(&q, fifoBuffer);
+      get_pos_vel_for_odom();
+      imu_pub();
+      nav_pub();
+      tf_pub();
+      RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
+      RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
+      RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
+    
+  }
+  /*------------------end of DMP code-----------------*/
+  //RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
+  //RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
+  //RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
   //RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
   
 }
