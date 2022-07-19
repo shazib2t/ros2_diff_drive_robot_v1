@@ -389,7 +389,7 @@ void stop()
 void subscription_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   // if velocity in x direction is 0 turn off LED, if 1 turn on LED
-  //digitalWrite(LED_PIN, (msg->linear.x == 0) ? LOW : HIGH);
+  digitalWrite(LED_PIN, (msg->linear.x == 0) ? LOW : HIGH);
 
   // Cap values at [-1 .. 1]
   //float x = max(min(msg->linear.x, 1.0f), -1.0f);
@@ -891,7 +891,8 @@ void loop() {
   // if programming failed, don't try to do anything
   if (!dmpReady) return;
   // read a packet from FIFO
-  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
+  //if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
+    (mpu.dmpGetCurrentFIFOPacket(fifoBuffer));
       mpu.dmpGetQuaternion(&q, fifoBuffer);
       get_pos_vel_for_odom();
       imu_pub();
@@ -901,11 +902,11 @@ void loop() {
       RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
       RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
     
-  }
+  //}
   /*------------------end of DMP code-----------------*/
   //RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
-  //RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
+  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
   
 }
