@@ -229,7 +229,7 @@ unsigned long prev_odom_update = 0;
 void get_pos_vel_for_odom(){
   struct timespec tv = {0};
   clock_gettime(0, &tv);
-  current_time = tv.tv_sec;
+  current_time = tv.tv_nsec;//.tv_sec;
   deltaTime = (current_time - last_time); // delta time to find the position and velocity
   
   //float deltaTime = 1/46.0;
@@ -260,8 +260,8 @@ void get_pos_vel_for_odom(){
   //omega_left  = (deltaLeft  * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
   //omega_right = (deltaRight * DistancePerCount) / deltaTime; //(current_time - last_time).toSec();
 
-  vx  = (deltaLeft  * DistancePerCount) / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
-  vy  = (deltaRight * DistancePerCount)  / current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
+  vx  = (deltaLeft  * DistancePerCount) / (deltaTime/1000000000); //current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
+  vy  = (deltaRight * DistancePerCount)  / (deltaTime/1000000000); //current_time; //(current_time - last_time).toSec(); ***Since the current time is already using ros2 time
 
   //v_left  = omega_left;
   //v_right = omega_right; 
@@ -271,20 +271,20 @@ void get_pos_vel_for_odom(){
   vxx = (vx + vy)/2;
   vth = ((vy - vx)/lengthBetweenTwoWheels);
 
-  th += vth;
+  //th += vth;
 
   //double dt = (current_time - last_time).toSec();
   //double delta_x = (vx * cos(temp_heading)) * current_time;// dt; ***Since the current time is already using ros2 time
   //double delta_y = (vx * sin(temp_heading)) * current_time; //dt; ***Since the current time is already using ros2 time
   //double delta_th = vth * deltaTime; //dt;
 
-  double delta_x = (vxx * cos(th) - 0 * sin(th)) * current_time;
-  double delta_y = (vxx * sin(th) + 0 * cos(th)) * current_time;
-  double delta_th = vth * current_time;
+  double delta_x = (vxx * cos(vth) - 0 * sin(vth)) * (deltaTime/1000000000); //current_time;
+  double delta_y = (vxx * sin(vth) + 0 * cos(vth)) * (deltaTime/1000000000); //current_time;
+  double delta_th = vth * (deltaTime/1000000000); //current_time;
   
   x += delta_x;
   y += delta_y;
-  //th += delta_th;
+  th += delta_th;
 
   _PreviousLeftEncoderCounts  = tick_x;
   _PreviousRightEncoderCounts = tick_y;
@@ -614,12 +614,12 @@ void setup() {
   geometry_msgs__msg__TransformStamped__Sequence__init(&tf_message->transforms, 1);
 
   tf_message->transforms.data[0].header.frame_id.data = (char*)malloc(100*sizeof(char));
-  char string1[] = "/map";
+  char string1[] = "map";
   memcpy(tf_message->transforms.data[0].header.frame_id.data, string1, strlen(string1) + 1);
   tf_message->transforms.data[0].header.frame_id.size = strlen(tf_message->transforms.data[0].header.frame_id.data);
   tf_message->transforms.data[0].header.frame_id.capacity = 100;
 
-  char string2[] = "/base_link";
+  char string2[] = "base_link";
   tf_message->transforms.data[0].child_frame_id.data =  (char*)malloc(100*sizeof(char));
   memcpy(tf_message->transforms.data[0].child_frame_id.data, string2, strlen(string2) + 1);
   tf_message->transforms.data[0].child_frame_id.size = strlen(tf_message->transforms.data[0].child_frame_id.data);
@@ -639,7 +639,7 @@ void setup() {
   //imu->header.frame_id.data= "/imu";
   
   imu->header.frame_id.data = (char*)malloc(100*sizeof(char));
-  char string[] = "/imu";
+  char string[] = "imu";
   memcpy(imu->header.frame_id.data, string, strlen(string) + 1);
   imu->header.frame_id.size = strlen(imu->header.frame_id.data);
   imu->header.frame_id.capacity = 100;
@@ -653,10 +653,11 @@ void setup() {
   //--------------------------Odometry data--------------------------------
   
   odometry = nav_msgs__msg__Odometry__create();
-  std_msgs__msg__Header__init(&odometry->header);
+  
+  //std_msgs__msg__Header__init(&odometry->header);
   //rosidl_runtime_c__String__init(&odometry->child_frame_id);
   //std_msgs__msg__String__init(&odometry->child_frame_id, 1);
-  //geometry_msgs__msg__TransformStamped__Sequence__init(&odometry->transforms_1, 1);
+  //geometry_msgs__msg__TransformStamped__Sequence__init(&odometry->transforms, 1);
   //geometry_msgs__msg__QuaternionStamped__Sequence__init(&imu->orientation, 1);
   //geometry_msgs__msg__Vector3Stamped__Sequence__init(&imu->angular_velocity, 1);
   //geometry_msgs__msg__Vector3Stamped__Sequence__init(&imu->linear_acceleration, 1);
@@ -664,12 +665,12 @@ void setup() {
   //imu->header.frame_id.data= "/imu";
   
   odometry->header.frame_id.data = (char*)malloc(100*sizeof(char));
-  char string_odom[] = "/odom";
+  char string_odom[] = "odom";
   memcpy(odometry->header.frame_id.data, string_odom, strlen(string_odom) + 1);
   odometry->header.frame_id.size = strlen(odometry->header.frame_id.data);
   odometry->header.frame_id.capacity = 100;
 
-  char string_odom_2[] = "/base_link";
+  char string_odom_2[] = "base_footprint";
   odometry->child_frame_id.data =  (char*)malloc(100*sizeof(char));
   memcpy(odometry->child_frame_id.data, string_odom_2, strlen(string_odom_2) + 1);
   odometry->child_frame_id.size = strlen(odometry->child_frame_id.data);
@@ -822,10 +823,7 @@ void nav_pub(){
 
   mpu.dmpGetQuaternion(&q, fifoBuffer);
 
-
-  odometry->header.stamp.nanosec = tv.tv_nsec;
-  odometry->header.stamp.sec = tv.tv_sec;
-  
+   
   odometry->pose.pose.position.x = x;
   odometry->pose.pose.position.y = y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
@@ -834,9 +832,9 @@ void nav_pub(){
   odometry->pose.pose.orientation.z = q.z;//-q[3];//-(float) mpu.getQuaternionZ();
   odometry->pose.pose.orientation.w = q.w;//q[0];//(float) mpu.getQuaternionW();
 
-  odometry->pose.covariance[0] = 0.001;
-  odometry->pose.covariance[7] = 0.001;
-  odometry->pose.covariance[35] = 0.001;
+  //odometry->pose.covariance[0] = 0.001;
+  //odometry->pose.covariance[7] = 0.001;
+  //odometry->pose.covariance[35] = 0.001;
 
   
 
@@ -848,11 +846,12 @@ void nav_pub(){
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
   odometry->twist.twist.angular.z = th; //vth; // (double) velocity_z;
 
-  odometry->twist.covariance[0] = 0.001;
-  odometry->twist.covariance[7] = 0.001;
-  odometry->twist.covariance[35] = 0.001;
+  //odometry->twist.covariance[0] = 0.001;
+  //odometry->twist.covariance[7] = 0.001;
+  //odometry->twist.covariance[35] = 0.001;
   
-  
+  odometry->header.stamp.nanosec = tv.tv_nsec;
+  odometry->header.stamp.sec = tv.tv_sec;
   
 }
 
