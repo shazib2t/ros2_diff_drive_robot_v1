@@ -230,15 +230,6 @@ void get_pos_vel_for_odom(){
   current_time = tv.tv_nsec;//.tv_sec;
   deltaTime = (current_time - last_time); // delta time to find the position and velocity
   
-  //float deltaTime = 1/46.0;
-
-  /*--------------test-----------------*/
-  mpu.dmpGetQuaternion(&q, fifoBuffer);
-  mpu.dmpGetGravity(&gravity, &q);
-  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-  
-  yaw = ypr[0] * (180/3.14159265);
-  
   //tick counter
   tick_x = left_wheel_tick_count;
   tick_y = right_wheel_tick_count;
@@ -776,7 +767,7 @@ void nav_pub(){
    
   odometry->pose.pose.position.x = d_x;
   odometry->pose.pose.position.y = d_y;
-  odometry->pose.pose.position.z = d; //(double) position_x;
+  odometry->pose.pose.position.z = 0.0; //(double) position_x;
   odometry->pose.pose.orientation.x = q.x;//q[1];//(float) mpu.getQuaternionX();
   odometry->pose.pose.orientation.y = q.y;//-q[2];//-(float) mpu.getQuaternionY();
   odometry->pose.pose.orientation.z = rotation_z; //q.z;//-q[3];//-(float) mpu.getQuaternionZ();
