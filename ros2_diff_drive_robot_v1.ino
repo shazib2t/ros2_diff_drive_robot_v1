@@ -222,6 +222,9 @@ double lengthBetweenTwoWheels = 0.24; //240mm
 //double deltaTime = 0.0;
 unsigned long prev_odom_update = 0;
 
+//calcuate time offset from ros agent to robot
+unsigned long long time_offset = 0;
+
 //MMM this function will calculate the position and velocity from encoder data 
 
 void get_pos_vel_for_odom(){
@@ -523,7 +526,7 @@ void setup() {
     &publisher_i,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-    "/imu"));
+    "/imu/data"));
 
 
    //MMM 12-12-2021
@@ -533,7 +536,7 @@ void setup() {
     &publisher_nav,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
-    "/odom"));
+    "/odom/unfiltered"));
   
 
   // create timer,
@@ -543,6 +546,9 @@ void setup() {
     &support,
     RCL_MS_TO_NS(timer_timeout),
     timer_callback));
+
+    //syntime with microros
+    syncTime();
 
   // create executor
   RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
@@ -560,7 +566,7 @@ void setup() {
   tf_message->transforms.data[0].header.frame_id.size = strlen(tf_message->transforms.data[0].header.frame_id.data);
   tf_message->transforms.data[0].header.frame_id.capacity = 100;
 
-  char string2[] = "base_link";
+  char string2[] = "odom";
   tf_message->transforms.data[0].child_frame_id.data =  (char*)malloc(100*sizeof(char));
   memcpy(tf_message->transforms.data[0].child_frame_id.data, string2, strlen(string2) + 1);
   tf_message->transforms.data[0].child_frame_id.size = strlen(tf_message->transforms.data[0].child_frame_id.data);
@@ -580,7 +586,7 @@ void setup() {
   //imu->header.frame_id.data= "/imu";
   
   imu->header.frame_id.data = (char*)malloc(100*sizeof(char));
-  char string[] = "imu";
+  char string[] = "imu_link";
   memcpy(imu->header.frame_id.data, string, strlen(string) + 1);
   imu->header.frame_id.size = strlen(imu->header.frame_id.data);
   imu->header.frame_id.capacity = 100;
@@ -606,12 +612,12 @@ void setup() {
   //imu->header.frame_id.data= "/imu";
   
   odometry->header.frame_id.data = (char*)malloc(100*sizeof(char));
-  char string_odom[] = "map";
+  char string_odom[] = "odom";
   memcpy(odometry->header.frame_id.data, string_odom, strlen(string_odom) + 1);
   odometry->header.frame_id.size = strlen(odometry->header.frame_id.data);
   odometry->header.frame_id.capacity = 100;
 
-  char string_odom_2[] = "odom";
+  char string_odom_2[] = "base_footprint";
   odometry->child_frame_id.data =  (char*)malloc(100*sizeof(char));
   memcpy(odometry->child_frame_id.data, string_odom_2, strlen(string_odom_2) + 1);
   odometry->child_frame_id.size = strlen(odometry->child_frame_id.data);
@@ -696,11 +702,46 @@ void left_wheel_tick() {
 /*----This is end of encoder section-------*/
 
 
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+/*----Timer section------------------------*/
+
+void syncTime()
+{
+    // get the current time from the agent
+    unsigned long now = millis();
+    RCCHECK(rmw_uros_sync_session(10));
+    unsigned long long ros_time_ms = rmw_uros_epoch_millis(); 
+    // now we can find the difference between ROS time and uC time
+    time_offset = ros_time_ms - now;
+}
+
+struct timespec getTime()
+{
+    struct timespec tp = {0};
+    // add time difference between uC time and ROS time to
+    // synchronize time with ROS
+    unsigned long long now = millis() + time_offset;
+    tp.tv_sec = now / 1000;
+    tp.tv_nsec = (now % 1000) * 1000000;
+
+    return tp;
+}
+
+/*-----------------------------------------*/
+/*-----------------------------------------*/
+/*----This is end of timer section-------*/
+
+
+
+
 //MMM Imu loop function
 void imu_pub(){
   //MMM 11-19-2021
-  struct timespec tv = {0};
-  clock_gettime(0, &tv);
+  //struct timespec tv = {0};
+  //clock_gettime(0, &tv);
+
+  struct timespec time_stamp = getTime();
 
   mpu.dmpGetQuaternion(&q, fifoBuffer);
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
@@ -721,14 +762,15 @@ void imu_pub(){
   imu->linear_acceleration.y = aaReal.y;//(double) mpu.getAccY(); 
   imu->linear_acceleration.z = aaReal.z;//(double) mpu.getAccZ();  
   
-  imu->header.stamp.nanosec = tv.tv_nsec;
-  imu->header.stamp.sec = tv.tv_sec;
+  imu->header.stamp.nanosec = time_stamp.tv_nsec;
+  imu->header.stamp.sec = time_stamp.tv_sec;
 }
 
 //MMM tf loop function
 void tf_pub(){
-  struct timespec tv = {0};
-  clock_gettime(0, &tv);
+  //struct timespec tv = {0};
+  //clock_gettime(0, &tv);
+  struct timespec time_stamp = getTime();
   //euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
 
   mpu.dmpGetQuaternion(&q, fifoBuffer);
@@ -736,8 +778,8 @@ void tf_pub(){
   float rotation_z = sin(th_plus/2);
   float rotation_w = cos(th_plus/2);
   
-  tf_message->transforms.data[0].header.stamp.nanosec = tv.tv_nsec;
-  tf_message->transforms.data[0].header.stamp.sec = tv.tv_sec;
+  tf_message->transforms.data[0].header.stamp.nanosec = time_stamp.tv_nsec;
+  tf_message->transforms.data[0].header.stamp.sec = time_stamp.tv_sec;
   tf_message->transforms.data[0].transform.translation.x = d_x; //(double) mpu.getEulerX();//mpu.getPitch();
   tf_message->transforms.data[0].transform.translation.y = d_y; //(double) mpu.getEulerY();//mpu.getRoll();
   tf_message->transforms.data[0].transform.translation.z = 0; //(double) mpu.getEulerZ();//mpu.getYaw();
@@ -755,8 +797,9 @@ void tf_pub(){
 void nav_pub(){
 
   get_pos_vel_for_odom();
-  struct timespec tv = {0};
-  clock_gettime(0, &tv);
+  //struct timespec tv = {0};
+  //clock_gettime(0, &tv);
+  struct timespec time_stamp = getTime();
 
   //euler_to_quat(mpu.getRoll()- 9.50, mpu.getPitch() -1.80, mpu.getYaw() - 40.50, q);
 
@@ -788,8 +831,8 @@ void nav_pub(){
   //odometry->twist.covariance[7] = 0.001;
   //odometry->twist.covariance[35] = 0.001;
   
-  odometry->header.stamp.nanosec = tv.tv_nsec;
-  odometry->header.stamp.sec = tv.tv_sec;
+  odometry->header.stamp.nanosec = time_stamp.tv_nsec;
+  odometry->header.stamp.sec = time_stamp.tv_sec;
   
 }
 
@@ -798,8 +841,9 @@ void loop() {
   //delay(100);
   
   
-  struct timespec tv = {0};
-  clock_gettime(0, &tv);
+  //struct timespec tv = {0};
+  //clock_gettime(0, &tv);
+  struct timespec time_stamp = getTime();
 
   //mpu.update();
   //get_pos_vel_for_odom();
@@ -833,8 +877,8 @@ void loop() {
   //get_pos_vel_for_odom();
   imu_pub();
   nav_pub();
-  tf_pub();
-  RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
+  //tf_pub();
+  //RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
     
@@ -843,6 +887,6 @@ void loop() {
   //RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
-  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
+  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
   
 }
