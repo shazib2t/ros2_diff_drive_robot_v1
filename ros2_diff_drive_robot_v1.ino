@@ -129,6 +129,12 @@ int16_t gx, gy, gz;
 
 float ypr[3];
 float yaw;
+
+float gyro_covariance = 0.00001;
+float accel_covariance = 0.01;
+float pitch_roll_covariance = 0.00001;
+float yaw_covariance = 0.00001;
+
 //MMM
 #define PWM_MIN 0
 #define PWMRANGE 255
@@ -748,19 +754,42 @@ void imu_pub(){
   mpu.dmpGetAccel(&aa, fifoBuffer);
   mpu.dmpGetGravity(&gravity, &q);
   mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
   
   imu->orientation.x = q.x;//(double) mpu.getQuaternionX(); //q[2];
   imu->orientation.y = q.y;//(double) mpu.getQuaternionY();  //q[1];
   imu->orientation.z = q.z;//(double) mpu.getQuaternionZ();  //q[3]; 
   imu->orientation.w = q.w;//(double) mpu.getQuaternionW();  //q[0];
 
-  imu->angular_velocity.x = gx;//(double) mpu.getGyroX(); 
-  imu->angular_velocity.y = gy;//(double) mpu.getGyroY(); 
-  imu->angular_velocity.z = gz;//(double) mpu.getGyroZ();   
+  imu->angular_velocity.x = ypr[2]; //gx;//(double) mpu.getGyroX(); 
+  imu->angular_velocity.y = ypr[1]; //gy;//(double) mpu.getGyroY(); 
+  imu->angular_velocity.z = ypr[0]; //gz;//(double) mpu.getGyroZ();
 
-  imu->linear_acceleration.x = aaReal.x;//(double) mpu.getAccX(); 
-  imu->linear_acceleration.y = aaReal.y;//(double) mpu.getAccY(); 
-  imu->linear_acceleration.z = aaReal.z;//(double) mpu.getAccZ();  
+  if(imu->angular_velocity.x > -0.01 && imu->angular_velocity.x < 0.01 )
+    imu->angular_velocity.x = 0.0; 
+         
+  if(imu->angular_velocity.y > -0.01 && imu->angular_velocity.y < 0.01 )
+    imu->angular_velocity.y = 0.0;
+
+  if(imu->angular_velocity.z > -0.2 && imu->angular_velocity.z < 0.2 )
+    imu->angular_velocity.z = 0.0;
+
+  imu->angular_velocity_covariance[0] = gyro_covariance;
+  imu->angular_velocity_covariance[4] = gyro_covariance;
+  imu->angular_velocity_covariance[8] = gyro_covariance;
+  
+
+  imu->linear_acceleration.x = aaReal.x * 1/16384. * 9.80665; //aaReal.x;//(double) mpu.getAccX(); 
+  imu->linear_acceleration.y = aaReal.y * 1/16384. * 9.80665; //aaReal.y;//(double) mpu.getAccY(); 
+  imu->linear_acceleration.z = aaReal.z * 1/16384. * 9.80665; //aaReal.z;//(double) mpu.getAccZ(); 
+
+  imu->linear_acceleration_covariance[0] = accel_covariance;
+  imu->linear_acceleration_covariance[4] = accel_covariance;
+  imu->linear_acceleration_covariance[8] = accel_covariance;
+
+  imu->orientation_covariance[0] = pitch_roll_covariance;
+  imu->orientation_covariance[4] = pitch_roll_covariance;
+  imu->orientation_covariance[8] = yaw_covariance;
   
   imu->header.stamp.nanosec = time_stamp.tv_nsec;
   imu->header.stamp.sec = time_stamp.tv_sec;
@@ -887,6 +916,6 @@ void loop() {
   //RCSOFTCHECK(rcl_publish(&publisher, tf_message, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_i, imu, NULL));
   //RCSOFTCHECK(rcl_publish(&publisher_nav, odometry, NULL));
-  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
+  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)));
   
 }
