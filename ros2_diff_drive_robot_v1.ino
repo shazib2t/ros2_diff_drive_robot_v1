@@ -765,13 +765,16 @@ void imu_pub(){
   imu->angular_velocity.y = ypr[1]; //gy;//(double) mpu.getGyroY(); 
   imu->angular_velocity.z = ypr[0]; //gz;//(double) mpu.getGyroZ();
 
-  if(imu->angular_velocity.x > -0.01 && imu->angular_velocity.x < 0.01 )
+  if(imu->angular_velocity.x > -0.01 && imu->angular_velocity.x < 0.02 )
     imu->angular_velocity.x = 0.0; 
          
-  if(imu->angular_velocity.y > -0.01 && imu->angular_velocity.y < 0.01 )
+  if(imu->angular_velocity.y > -0.01 && imu->angular_velocity.y < 0.02 )
     imu->angular_velocity.y = 0.0;
 
   if(imu->angular_velocity.z > -0.2 && imu->angular_velocity.z < 0.2 )
+    imu->angular_velocity.z = 0.0;
+
+  if(delta_th == 0.0)
     imu->angular_velocity.z = 0.0;
 
   imu->angular_velocity_covariance[0] = gyro_covariance;
