@@ -1,4 +1,4 @@
-/**
+ /**
   ROS2 differential drive robot 
   Name: Robot firmware
   Purpose: Differential drive robot for ros2 navigation and other ros2 based tasks.
@@ -124,6 +124,13 @@ VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measur
 VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
 
+#define ACCEL_FACTOR                      0.000598550415   // (ADC_Value / Scale) * 9.80665            => Range : +- 2[g]
+                                                           //                                             Scale : +- 16384
+#define GYRO_FACTOR                       0.0010642        // (ADC_Value/Scale) * (pi/180)             => Range : +- 2000[deg/s]
+                                                           //                                             Scale : +- 16.4[deg/s]
+
+#define MAG_FACTOR                        15e-8
+
 int16_t ax, ay, az;
 int16_t gx, gy, gz;
 
@@ -131,7 +138,7 @@ float ypr[3];
 float yaw;
 
 float gyro_covariance = 0.00001;
-float accel_covariance = 0.01;
+float accel_covariance = 0.00001;
 float pitch_roll_covariance = 0.00001;
 float yaw_covariance = 0.00001;
 
@@ -220,10 +227,10 @@ volatile int tick_x = 0;
 volatile int tick_y = 0;
 float deltaLeft = 0;
 float deltaRight = 0;
-volatile int _PreviousLeftEncoderCounts = 0;
+volatile int _PreviousLeftEncoderCounts = 0; 
 volatile int _PreviousRightEncoderCounts = 0;
 double DistancePerCount = (2* 3.14159265 * 0.06) / 150; //radius = 60mm = 0.06
-double lengthBetweenTwoWheels = 0.24; //240mm
+double lengthBetweenTwoWheels = 0.240; //236mm
 
 //double deltaTime = 0.0;
 unsigned long prev_odom_update = 0;
@@ -244,26 +251,29 @@ void get_pos_vel_for_odom(){
   tick_y = right_wheel_tick_count;
   
 
-  // extract the wheel velocities from the tick signals count
+  // extract the wheel distance traveled from the tick signals count
   deltaLeft  = (tick_x - _PreviousLeftEncoderCounts) * DistancePerCount;
   deltaRight = (tick_y - _PreviousRightEncoderCounts) * DistancePerCount;
 
   //distance traveled is the average of the two wheels 
   d = (deltaLeft + deltaRight)/2;
   //this approximation works (in radians) for small angles
-  th = ((deltaRight - deltaLeft)/lengthBetweenTwoWheels);
+  th = ((deltaRight - deltaLeft)/(lengthBetweenTwoWheels));
 
-  //calculate velocities
+  //calculate average velocities
   delta_d = d / (deltaTime/1000000000);
-  delta_th = th / (deltaTime/1000000000);
+  delta_th = th / (deltaTime/1000000000); //th;
 
 
   if (d != 0){
     //calculate distance traveled in x and y
-    x = cos(th) *d;
-    y = -sin(th) *d;
+    x = cos(th) *d; //d;
+    y = sin(th) *d; //d; //i dont know why there is a (-) sign
     
     //calculate the final position of the robot
+
+    //d_x = x + cos(th) * d;  //d;
+    //d_y = y + sin(th) * d;  //d;
     
     d_x +=  cos(th_plus) * x - sin(th_plus) * y;
     d_y +=  sin(th_plus) * x + cos(th_plus) * y;
@@ -271,6 +281,8 @@ void get_pos_vel_for_odom(){
 
   if (th!=0){
     th_plus += th;
+    
+
     
   }
   
@@ -761,21 +773,21 @@ void imu_pub(){
   imu->orientation.z = q.z;//(double) mpu.getQuaternionZ();  //q[3]; 
   imu->orientation.w = q.w;//(double) mpu.getQuaternionW();  //q[0];
 
-  imu->angular_velocity.x = ypr[2]; //gx;//(double) mpu.getGyroX(); 
-  imu->angular_velocity.y = ypr[1]; //gy;//(double) mpu.getGyroY(); 
-  imu->angular_velocity.z = ypr[0]; //gz;//(double) mpu.getGyroZ();
+  imu->angular_velocity.x = gx * GYRO_FACTOR; //* 3.1415/180;//ypr[2]; //gx;//(double) mpu.getGyroX(); 
+  imu->angular_velocity.y = gy * GYRO_FACTOR; //* 3.1415/180;//ypr[1]; //gy;//(double) mpu.getGyroY(); 
+  imu->angular_velocity.z = gz * GYRO_FACTOR; //* 3.1415/180;//-ypr[0]; //gz;//(double) mpu.getGyroZ();
 
-  if(imu->angular_velocity.x > -0.01 && imu->angular_velocity.x < 0.02 )
+  if(imu->angular_velocity.x > -0.01 && imu->angular_velocity.x < 0.01 )
     imu->angular_velocity.x = 0.0; 
          
   if(imu->angular_velocity.y > -0.01 && imu->angular_velocity.y < 0.02 )
     imu->angular_velocity.y = 0.0;
 
-  if(imu->angular_velocity.z > -0.2 && imu->angular_velocity.z < 0.2 )
+  if(imu->angular_velocity.z > -0.01 && imu->angular_velocity.z < 0.02 )
     imu->angular_velocity.z = 0.0;
 
-  if(delta_th == 0.0)
-    imu->angular_velocity.z = 0.0;
+  //if(delta_th == 0.0)
+  //  imu->angular_velocity.z = 0.0;
 
   imu->angular_velocity_covariance[0] = gyro_covariance;
   imu->angular_velocity_covariance[4] = gyro_covariance;
@@ -837,20 +849,20 @@ void nav_pub(){
 
   mpu.dmpGetQuaternion(&q, fifoBuffer);
 
-  float rotation_z = sin(th_plus/2);
-  float rotation_w = cos(th_plus/2);
+  float rotation_z = sin(th/2);
+  float rotation_w = cos(th/2);
    
   odometry->pose.pose.position.x = d_x;
   odometry->pose.pose.position.y = d_y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
   odometry->pose.pose.orientation.x = q.x;//q[1];//(float) mpu.getQuaternionX();
   odometry->pose.pose.orientation.y = q.y;//-q[2];//-(float) mpu.getQuaternionY();
-  odometry->pose.pose.orientation.z = rotation_z; //q.z;//-q[3];//-(float) mpu.getQuaternionZ();
-  odometry->pose.pose.orientation.w = rotation_w; //q.w;//q[0];//(float) mpu.getQuaternionW();
+  odometry->pose.pose.orientation.z = q.z;//-q[3];//-(float) mpu.getQuaternionZ();
+  odometry->pose.pose.orientation.w = q.w;//q[0];//(float) mpu.getQuaternionW();
 
-  //odometry->pose.covariance[0] = 0.001;
-  //odometry->pose.covariance[7] = 0.001;
-  //odometry->pose.covariance[35] = 0.001;
+  odometry->pose.covariance[0] = 0.00001;
+  odometry->pose.covariance[7] = 0.00001;
+  odometry->pose.covariance[35] = 0.00001;
   odometry->twist.twist.linear.x = delta_d; 
   odometry->twist.twist.linear.y = 0.0; 
   odometry->twist.twist.linear.z = 0.0; // (double) velocity_z;
@@ -859,9 +871,9 @@ void nav_pub(){
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
   odometry->twist.twist.angular.z = delta_th; //vth; // (double) velocity_z;
 
-  //odometry->twist.covariance[0] = 0.001;
-  //odometry->twist.covariance[7] = 0.001;
-  //odometry->twist.covariance[35] = 0.001;
+  odometry->twist.covariance[0] = 0.00001;
+  odometry->twist.covariance[7] = 0.00001;
+  odometry->twist.covariance[35] = 0.0001;
   
   odometry->header.stamp.nanosec = time_stamp.tv_nsec;
   odometry->header.stamp.sec = time_stamp.tv_sec;
