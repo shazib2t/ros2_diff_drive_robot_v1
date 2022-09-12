@@ -216,6 +216,11 @@ float delta_th = 0.0;
 float th_plus = 0.0;
 float d_x = 0.0;
 float d_y = 0.0;
+float vL = 0.0;
+float vR = 0.0;
+float vX = 0.0;
+float vY = 0.0;
+float vTh = 0.0;
 
 float position_z = 0.0;
 float deltaTime = 0.0;
@@ -255,6 +260,43 @@ void get_pos_vel_for_odom(){
   deltaLeft  = (tick_x - _PreviousLeftEncoderCounts) * DistancePerCount;
   deltaRight = (tick_y - _PreviousRightEncoderCounts) * DistancePerCount;
 
+  //new
+
+  //velocity component
+  vL = deltaLeft / (deltaTime/1000000000);
+  vR = deltaRight / (deltaTime/1000000000);
+
+  vX = (vL + vR) / 2;
+  vY = 0.0;
+  vTh = (vL - vR)/ lengthBetweenTwoWheels;
+
+  if  (vX !=0) {
+    
+  
+    d_x = (vX * cos(th)) * (deltaTime/1000000000);
+    d_y = (vX * sin(th)) * (deltaTime/1000000000);
+
+    x += d_x;
+    y += d_y;
+
+
+  }
+  delta_th = vTh * (deltaTime/1000000000);
+
+
+  if (vTh !=0){
+    
+  
+    th +=delta_th;
+  } 
+
+  //end of new
+
+  
+  
+  
+  
+  /*
   //distance traveled is the average of the two wheels 
   d = (deltaLeft + deltaRight)/2;
   //this approximation works (in radians) for small angles
@@ -263,7 +305,6 @@ void get_pos_vel_for_odom(){
   //calculate average velocities
   delta_d = d / (deltaTime/1000000000);
   delta_th = th / (deltaTime/1000000000); //th;
-
 
   if (d != 0){
     //calculate distance traveled in x and y
@@ -286,6 +327,7 @@ void get_pos_vel_for_odom(){
     
   }
   
+  */
   _PreviousLeftEncoderCounts  = tick_x;
   _PreviousRightEncoderCounts = tick_y;
 
@@ -852,8 +894,8 @@ void nav_pub(){
   float rotation_z = sin(th/2);
   float rotation_w = cos(th/2);
    
-  odometry->pose.pose.position.x = d_x;
-  odometry->pose.pose.position.y = d_y;
+  odometry->pose.pose.position.x = x; //d_x;
+  odometry->pose.pose.position.y = y; //d_y;
   odometry->pose.pose.position.z = 0.0; //(double) position_x;
   odometry->pose.pose.orientation.x = q.x;//q[1];//(float) mpu.getQuaternionX();
   odometry->pose.pose.orientation.y = q.y;//-q[2];//-(float) mpu.getQuaternionY();
@@ -863,13 +905,13 @@ void nav_pub(){
   odometry->pose.covariance[0] = 0.00001;
   odometry->pose.covariance[7] = 0.00001;
   odometry->pose.covariance[35] = 0.00001;
-  odometry->twist.twist.linear.x = delta_d; 
-  odometry->twist.twist.linear.y = 0.0; 
+  odometry->twist.twist.linear.x = vX; //delta_d; 
+  odometry->twist.twist.linear.y = vY; //0.0; 
   odometry->twist.twist.linear.z = 0.0; // (double) velocity_z;
 
   odometry->twist.twist.angular.x = 0.0; //(double) velocity_x; 
   odometry->twist.twist.angular.y = 0.0; //(double) velocity_y; 
-  odometry->twist.twist.angular.z = delta_th; //vth; // (double) velocity_z;
+  odometry->twist.twist.angular.z = vTh; //delta_th; //vth; // (double) velocity_z;
 
   odometry->twist.covariance[0] = 0.00001;
   odometry->twist.covariance[7] = 0.00001;
